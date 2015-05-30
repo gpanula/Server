@@ -704,7 +704,7 @@ void Client::CompleteConnect()
 			case SE_AddMeleeProc:
 			case SE_WeaponProc:
 			{
-				AddProcToWeapon(GetProcID(buffs[j1].spellid, x1), false, 100 + spells[buffs[j1].spellid].base2[x1], buffs[j1].spellid);
+				AddProcToWeapon(GetProcID(buffs[j1].spellid, x1), false, 100 + spells[buffs[j1].spellid].base2[x1], buffs[j1].spellid, buffs[j1].casterlevel);
 				break;
 			}
 			case SE_DefensiveProc:
@@ -1494,7 +1494,7 @@ void Client::Handle_Connect_OP_ZoneEntry(const EQApplicationPacket *app)
 		for (int i = 0; i < max_slots; i++) {
 			if (buffs[i].spellid != SPELL_UNKNOWN) {
 				m_pp.buffs[i].spellid = buffs[i].spellid;
-				m_pp.buffs[i].bard_modifier = 10;
+				m_pp.buffs[i].bard_modifier = buffs[i].instrument_mod;
 				m_pp.buffs[i].slotid = 2;
 				m_pp.buffs[i].player_id = 0x2211;
 				m_pp.buffs[i].level = buffs[i].casterlevel;
@@ -1703,7 +1703,7 @@ void Client::Handle_Connect_OP_ZoneEntry(const EQApplicationPacket *app)
 	/* Time of Day packet */
 	outapp = new EQApplicationPacket(OP_TimeOfDay, sizeof(TimeOfDay_Struct));
 	TimeOfDay_Struct* tod = (TimeOfDay_Struct*)outapp->pBuffer;
-	zone->zone_time.getEQTimeOfDay(time(0), tod);
+	zone->zone_time.GetCurrentEQTimeOfDay(time(0), tod);
 	outapp->priority = 6;
 	FastQueuePacket(&outapp);
 
@@ -4266,7 +4266,7 @@ void Client::Handle_OP_ClientUpdate(const EQApplicationPacket *app)
 			if((cur_time - m_TimeSinceLastPositionCheck) > 0)
 			{
 				float speed = (m_DistanceSinceLastPositionCheck * 100) / (float)(cur_time - m_TimeSinceLastPositionCheck);
-				float runs = GetRunspeed();
+				int runs = GetRunspeed();
 				if(speed > (runs * RuleR(Zone, MQWarpDetectionDistanceFactor)))
 				{
 					if(!GetGMSpeed() && (runs >= GetBaseRunspeed() || (speed > (GetBaseRunspeed() * RuleR(Zone, MQWarpDetectionDistanceFactor)))))
@@ -4334,7 +4334,7 @@ void Client::Handle_OP_ClientUpdate(const EQApplicationPacket *app)
 			if((cur_time - m_TimeSinceLastPositionCheck) > 2500)
 			{
 				float speed = (m_DistanceSinceLastPositionCheck * 100) / (float)(cur_time - m_TimeSinceLastPositionCheck);
-				float runs = GetRunspeed();
+				int runs = GetRunspeed();
 				if(speed > (runs * RuleR(Zone, MQWarpDetectionDistanceFactor)))
 				{
 					if(!GetGMSpeed() && (runs >= GetBaseRunspeed() || (speed > (GetBaseRunspeed() * RuleR(Zone, MQWarpDetectionDistanceFactor)))))
@@ -6362,7 +6362,12 @@ void Client::Handle_OP_GroupDisband(const EQApplicationPacket *app)
 			}
 		}
 	}
+
+	group = GetGroup();
+	if (!group) //We must recheck this here.. incase the final bot disbanded the party..otherwise we crash
+		return;
 #endif
+
 	if (group->GroupCount() < 3)
 	{
 		group->DisbandGroup();

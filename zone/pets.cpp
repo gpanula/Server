@@ -426,7 +426,7 @@ void Mob::MakePoweredPet(uint16 spell_id, const char* pettype, int16 petpower,
 	entity_list.AddNPC(npc, true, true);
 	SetPetID(npc->GetID());
 	// We need to handle PetType 5 (petHatelist), add the current target to the hatelist of the pet
-	
+
 
 	if (record.petcontrol == petTargetLock)
 	{
@@ -555,6 +555,7 @@ void NPC::GetPetState(SpellBuff_Struct *pet_buffs, uint32 *items, char *name) {
 			pet_buffs[i].level = buffs[i].casterlevel;
 			pet_buffs[i].effect = 10;
 			pet_buffs[i].counters = buffs[i].counters;
+			pet_buffs[i].bard_modifier = buffs[i].instrument_mod;
 		}
 		else {
 			pet_buffs[i].spellid = SPELL_UNKNOWN;
@@ -588,6 +589,7 @@ void NPC::SetPetState(SpellBuff_Struct *pet_buffs, uint32 *items) {
 			buffs[i].casterid			= 0;
 			buffs[i].counters			= pet_buffs[i].counters;
 			buffs[i].numhits			= spells[pet_buffs[i].spellid].numhits;
+			buffs[i].instrument_mod		= pet_buffs[i].bard_modifier;
 		}
 		else {
 			buffs[i].spellid = SPELL_UNKNOWN;

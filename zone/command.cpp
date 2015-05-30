@@ -1369,7 +1369,7 @@ void command_date(Client *c, const Seperator *sep)
 	else {
 		int h=0, m=0;
 		TimeOfDay_Struct eqTime;
-		zone->zone_time.getEQTimeOfDay( time(0), &eqTime);
+		zone->zone_time.GetCurrentEQTimeOfDay( time(0), &eqTime);
 		if(!sep->IsNumber(4))
 		h=eqTime.hour;
 		else
@@ -1402,7 +1402,7 @@ void command_timezone(Client *c, const Seperator *sep)
 		// Update all clients with new TZ.
 		EQApplicationPacket* outapp = new EQApplicationPacket(OP_TimeOfDay, sizeof(TimeOfDay_Struct));
 		TimeOfDay_Struct* tod = (TimeOfDay_Struct*)outapp->pBuffer;
-		zone->zone_time.getEQTimeOfDay(time(0), tod);
+		zone->zone_time.GetCurrentEQTimeOfDay(time(0), tod);
 		entity_list.QueueClients(c, outapp);
 		safe_delete(outapp);
 	}
@@ -1484,7 +1484,7 @@ void command_npcstats(Client *c, const Seperator *sep)
 		c->Message(0, "Current HP: %i  Max HP: %i",  c->GetTarget()->GetHP(), c->GetTarget()->GetMaxHP());
 		//c->Message(0, "Weapon Item Number: %s", c->GetTarget()->GetWeapNo());
 		c->Message(0, "Gender: %i  Size: %f  Bodytype: %d",  c->GetTarget()->GetGender(), c->GetTarget()->GetSize(), c->GetTarget()->GetBodyType());
-		c->Message(0, "Runspeed: %f  Walkspeed: %f",  c->GetTarget()->GetRunspeed(), c->GetTarget()->GetWalkspeed());
+		c->Message(0, "Runspeed: %i  Walkspeed: %i",  c->GetTarget()->GetRunspeed(), c->GetTarget()->GetWalkspeed());
 		c->Message(0, "Spawn Group: %i  Grid: %i",  c->GetTarget()->CastToNPC()->GetSp2(), c->GetTarget()->CastToNPC()->GetGrid());
 		c->Message(0, "EmoteID: %i",  c->GetTarget()->CastToNPC()->GetEmoteID());
 		c->GetTarget()->CastToNPC()->QueryLoot(c);
@@ -4393,7 +4393,7 @@ void command_time(Client *c, const Seperator *sep)
 	else {
 		c->Message(13, "To set the Time: #time HH [MM]");
 		TimeOfDay_Struct eqTime;
-		zone->zone_time.getEQTimeOfDay( time(0), &eqTime);
+		zone->zone_time.GetCurrentEQTimeOfDay( time(0), &eqTime);
 		sprintf(timeMessage,"%02d:%s%d %s (Timezone: %ih %im)", 
 			((eqTime.hour - 1) % 12) == 0 ? 12 : ((eqTime.hour - 1) % 12),
 			(eqTime.minute < 10) ? "0" : "", 

@@ -3717,7 +3717,7 @@ void Mob::CommonDamage(Mob* attacker, int32 &damage, const uint16 spell_id, cons
 			// update NPC stuff
 			auto new_pos = glm::vec3(m_Position.x + (a->force * std::sin(a->meleepush_xy) + m_Delta.x),
 						   m_Position.y + (a->force * std::cos(a->meleepush_xy) + m_Delta.y), m_Position.z);
-			if (zone->zonemap->CheckLoS(glm::vec3(m_Position), new_pos)) { // If we have LoS on the new loc it should be reachable.
+			if (zone->zonemap && zone->zonemap->CheckLoS(glm::vec3(m_Position), new_pos)) { // If we have LoS on the new loc it should be reachable.
 				if (IsNPC()) {
 					// Is this adequate?
 					Teleport(new_pos);
@@ -4143,7 +4143,7 @@ void Mob::TrySpellProc(const ItemInst *inst, const Item_Struct *weapon, Mob *on,
 					outapp->priority = 3;
 					entity_list.QueueCloseClients(this, outapp, false, 200, 0, true);
 					safe_delete(outapp);
-					ExecWeaponProc(nullptr, SpellProcs[i].spellID, on);
+					ExecWeaponProc(nullptr, SpellProcs[i].spellID, on, SpellProcs[i].level_override);
 					CheckNumHitsRemaining(NumHit::OffensiveSpellProcs, 0,
 								  SpellProcs[i].base_spellID);
 				} else {

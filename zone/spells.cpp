@@ -489,6 +489,12 @@ bool Mob::DoCastSpell(uint16 spell_id, uint16 target_id, uint16 slot,
 	safe_delete(outapp);
 	outapp = nullptr;
 
+	if (IsClient() && slot == USE_ITEM_SPELL_SLOT &&item_slot != 0xFFFFFFFF) {
+		auto item = CastToClient()->GetInv().GetItem(item_slot);
+		if (item && item->GetItem())
+			Message_StringID(MT_Spells, BEGINS_TO_GLOW, item->GetItem()->Name);
+	}
+
 	if (!DoCastingChecks()) {
 		InterruptSpell();
 		return false;
@@ -1897,7 +1903,7 @@ bool Mob::DetermineSpellTargets(uint16 spell_id, Mob *&spell_target, Mob *&ae_ce
 // we can't interrupt in this, or anything called from this!
 // if you need to abort the casting, return false
 bool Mob::SpellFinished(uint16 spell_id, Mob *spell_target, uint16 slot, uint16 mana_used,
-						uint32 inventory_slot, int16 resist_adjust, bool isproc)
+						uint32 inventory_slot, int16 resist_adjust, bool isproc, int level_override)
 {
 	//EQApplicationPacket *outapp = nullptr;
 	Mob *ae_center = nullptr;
@@ -2060,14 +2066,14 @@ bool Mob::SpellFinished(uint16 spell_id, Mob *spell_target, uint16 slot, uint16 
 				return(false);
 			}
 			if (isproc) {
-				SpellOnTarget(spell_id, spell_target, false, true, resist_adjust, true);
+				SpellOnTarget(spell_id, spell_target, false, true, resist_adjust, true, level_override);
 			} else {
 				if (spells[spell_id].targettype == ST_TargetOptional){
 					if (!TrySpellProjectile(spell_target, spell_id))
 						return false;
 				}
 
-				else if(!SpellOnTarget(spell_id, spell_target, false, true, resist_adjust, false)) {
+				else if(!SpellOnTarget(spell_id, spell_target, false, true, resist_adjust, false, level_override)) {
 					if(IsBuffSpell(spell_id) && IsBeneficialSpell(spell_id)) {
 						// Prevent mana usage/timers being set for beneficial buffs
 						if(casting_spell_type == 1)
@@ -2624,86 +2630,85 @@ int Mob::CalcBuffDuration(Mob *caster, Mob *target, uint16 spell_id, int32 caste
 		castlevel = caster_level_override;
 
 	int res = CalcBuffDuration_formula(castlevel, formula, duration);
+	if (caster == target && (target->aabonuses.IllusionPersistence || target->spellbonuses.IllusionPersistence ||
+				 target->itembonuses.IllusionPersistence) &&
+	    IsEffectInSpell(spell_id, SE_Illusion))
+		res = 10000; // ~16h override
 
 	res = mod_buff_duration(res, caster, target, spell_id);
 
 	Log.Out(Logs::Detail, Logs::Spells, "Spell %d: Casting level %d, formula %d, base_duration %d: result %d",
 		spell_id, castlevel, formula, duration, res);
 
-	return(res);
+	return res;
 }
 
 // the generic formula calculations
 int CalcBuffDuration_formula(int level, int formula, int duration)
 {
-	int i;	// temp variable
+	int temp;
 
-	switch(formula)
-	{
-		case 0:	// not a buff
+	switch (formula) {
+	case 1:
+		temp = level > 3 ? level / 2 : 1;
+		break;
+	case 2:
+		temp = level > 3 ? level / 2 + 5 : 6;
+		break;
+	case 3:
+		temp = 30 * level;
+		break;
+	case 4: // only used by 'LowerElement'
+		temp = 50;
+		break;
+	case 5:
+		temp = 2;
+		break;
+	case 6:
+		temp = level / 2 + 2;
+		break;
+	case 7:
+		temp = level;
+		break;
+	case 8:
+		temp = level + 10;
+		break;
+	case 9:
+		temp = 2 * level + 10;
+		break;
+	case 10:
+		temp = 3 * level + 10;
+		break;
+	case 11:
+		temp = 30 * (level + 3);
+		break;
+	case 12:
+		temp = level > 7 ? level / 4 : 1;
+		break;
+	case 13:
+		temp = 4 * level + 10;
+		break;
+	case 14:
+		temp = 5 * (level + 2);
+		break;
+	case 15:
+		temp = 10 * (level + 10);
+		break;
+	case 50: // Permanent. Cancelled by casting/combat for perm invis, non-lev zones for lev, curing poison/curse
+		 // counters, etc.
+		return -1;
+	case 51: // Permanent. Cancelled when out of range of aura.
+		return -4;
+	default:
+		// the client function has another bool parameter that if true returns -2 -- unsure
+		if (formula < 200)
 			return 0;
-
-		case 1:
-			i = (int)ceil(level / 2.0f);
-			return i < duration ? (i < 1 ? 1 : i) : duration;
-
-		case 2:
-			i = (int)ceil(level / 5.0f * 3);
-			return i < duration ? (i < 1 ? 1 : i) : duration;
-
-		case 3:
-			i = level * 30;
-			return i < duration ? (i < 1 ? 1 : i) : duration;
-
-		case 4:	// only used by 'LowerElement'
-			return ((duration != 0) ? duration : 50);
-
-		case 5:
-			i = duration;
-			// 0 value results in a 3 tick spell, else its between 1-3 ticks.
-			return i < 3 ? (i < 1 ? 3 : i) : 3;
-
-		case 6:
-			i = (int)ceil(level / 2.0f);
-			return i < duration ? (i < 1 ? 1 : i) : duration;
-
-		case 7:
-			i = level;
-			return (duration == 0) ? (i < 1 ? 1 : i) : duration;
-
-		case 8:
-			i = level + 10;
-			return i < duration ? (i < 1 ? 1 : i) : duration;
-
-		case 9:
-			i = level * 2 + 10;
-			return i < duration ? (i < 1 ? 1 : i) : duration;
-
-		case 10:
-			i = level * 3 + 10;
-			return i < duration ? (i < 1 ? 1 : i) : duration;
-
-		case 11:
-			return std::min((level + 3) * 30, duration);
-
-		case 12:
-		case 13:
-		case 14:
-		case 15:	// Don't know what the real formula for this should be. Used by Skinspikes potion.
-			return duration;
-
-		case 50:	// Permanent. Cancelled by casting/combat for perm invis, non-lev zones for lev, curing poison/curse counters, etc.
-			return 72000;	// 5 days until better method to make permanent
-
-		//case 51:	// Permanent. Cancelled when out of range of aura. Placeholder until appropriate duration identified.
-
-		case 3600:
-			return duration ? duration : 3600;
-
-		default:
-			Log.Out(Logs::General, Logs::None, "CalcBuffDuration_formula: unknown formula %d", formula);
-			return 0;
+		temp = formula;
+		break;
 	}
+	if (duration && duration < temp)
+		temp = duration;
+	return temp;
 }
 
 // helper function for AddBuff to determine stacking
@@ -3066,7 +3071,7 @@ int Mob::AddBuff(Mob *caster, uint16 spell_id, int duration, int32 level_overrid
 	if (duration == 0) {
 		duration = CalcBuffDuration(caster, this, spell_id);
 
-		if (caster)
+		if (caster && duration > 0) // negatives are perma buffs
 			duration = caster->GetActSpellDuration(spell_id, duration);
 	}
 
@@ -3189,6 +3194,7 @@ int Mob::AddBuff(Mob *caster, uint16 spell_id, int duration, int32 level_overrid
 	buffs[emptyslot].dot_rune = 0;
 	buffs[emptyslot].ExtraDIChance = 0;
 	buffs[emptyslot].RootBreakChance = 0;
+	buffs[emptyslot].instrument_mod = caster ? caster->GetInstrumentMod(spell_id) : 10;
 
 	if (level_override > 0) {
 		buffs[emptyslot].UpdateClient = true;
@@ -3292,7 +3298,8 @@ int Mob::CanBuffStack(uint16 spellid, uint8 caster_level, bool iFailIfOverwrite)
 // and if you don't want effects just return false. interrupting here will
 // break stuff
 //
-bool Mob::SpellOnTarget(uint16 spell_id, Mob* spelltar, bool reflect, bool use_resist_adjust, int16 resist_adjust, bool isproc)
+bool Mob::SpellOnTarget(uint16 spell_id, Mob *spelltar, bool reflect, bool use_resist_adjust, int16 resist_adjust,
+			bool isproc, int level_override)
 {
 
 	// well we can't cast a spell on target without a target
@@ -3324,7 +3331,7 @@ bool Mob::SpellOnTarget(uint16 spell_id, Mob* spelltar, bool reflect, bool use_r
 	if(!IsValidSpell(spell_id))
 		return false;
 
-	uint16 caster_level = GetCasterLevel(spell_id);
+	uint16 caster_level = level_override > 0 ? level_override : GetCasterLevel(spell_id);
 
 	Log.Out(Logs::Detail, Logs::Spells, "Casting spell %d on %s with effective caster level %d", spell_id, spelltar->GetName(), caster_level);
 
@@ -3664,9 +3671,9 @@ bool Mob::SpellOnTarget(uint16 spell_id, Mob* spelltar, bool reflect, bool use_r
 	if(IsResistableSpell(spell_id))
 	{
 		if (IsCharmSpell(spell_id) || IsMezSpell(spell_id) || IsFearSpell(spell_id))
-			spell_effectiveness = spelltar->ResistSpell(spells[spell_id].resisttype, spell_id, this, use_resist_adjust, resist_adjust,true);
+			spell_effectiveness = spelltar->ResistSpell(spells[spell_id].resisttype, spell_id, this, use_resist_adjust, resist_adjust, true, false, false, level_override);
 		else
-			spell_effectiveness = spelltar->ResistSpell(spells[spell_id].resisttype, spell_id, this, use_resist_adjust, resist_adjust);
+			spell_effectiveness = spelltar->ResistSpell(spells[spell_id].resisttype, spell_id, this, use_resist_adjust, resist_adjust, false, false, false, level_override);
 
 		if(spell_effectiveness < 100)
 		{
@@ -3739,7 +3746,7 @@ bool Mob::SpellOnTarget(uint16 spell_id, Mob* spelltar, bool reflect, bool use_r
 	}
 
 	// cause the effects to the target
-	if(!spelltar->SpellEffect(this, spell_id, spell_effectiveness))
+	if(!spelltar->SpellEffect(this, spell_id, spell_effectiveness, level_override))
 	{
 		// if SpellEffect returned false there's a problem applying the
 		// spell. It's most likely a buff that can't stack.
@@ -4207,7 +4214,7 @@ bool Mob::IsImmuneToSpell(uint16 spell_id, Mob *caster)
 // pvp_resist_base
 // pvp_resist_calc
 // pvp_resist_cap
-float Mob::ResistSpell(uint8 resist_type, uint16 spell_id, Mob *caster, bool use_resist_override, int resist_override, bool CharismaCheck, bool CharmTick, bool IsRoot)
+float Mob::ResistSpell(uint8 resist_type, uint16 spell_id, Mob *caster, bool use_resist_override, int resist_override, bool CharismaCheck, bool CharmTick, bool IsRoot, int level_override)
 {
 
 	if(!caster)
@@ -4350,18 +4357,19 @@ float Mob::ResistSpell(uint8 resist_type, uint16 spell_id, Mob *caster, bool use
 	int level_mod = 0;
 
 	//Adjust our resist chance based on level modifiers
-	int temp_level_diff = GetLevel() - caster->GetLevel();
+	uint8 caster_level = level_override > 0 ? level_override : caster->GetLevel();
+	int temp_level_diff = GetLevel() - caster_level;
 
 	//Physical Resists are calclated using their own formula derived from extensive parsing.
 	if (resist_type == RESIST_PHYSICAL) {
-		level_mod = ResistPhysical(temp_level_diff, caster->GetLevel());
+		level_mod = ResistPhysical(temp_level_diff, caster_level);
 	}
 
 	else {
 
 		if(IsNPC() && GetLevel() >= RuleI(Casting,ResistFalloff))
 		{
-			int a = (RuleI(Casting,ResistFalloff)-1) - caster->GetLevel();
+			int a = (RuleI(Casting,ResistFalloff)-1) - caster_level;
 			if(a > 0)
 			{
 				temp_level_diff = a;
@@ -4388,7 +4396,7 @@ float Mob::ResistSpell(uint8 resist_type, uint16 spell_id, Mob *caster, bool use
 			level_mod = -level_mod;
 		}
 
-		if(IsNPC() && (caster->GetLevel() - GetLevel()) < -20)
+		if(IsNPC() && (caster_level - GetLevel()) < -20)
 		{
 			level_mod = 1000;
 		}
@@ -4399,7 +4407,7 @@ float Mob::ResistSpell(uint8 resist_type, uint16 spell_id, Mob *caster, bool use
 			int level_diff;
 			if(GetLevel() >= RuleI(Casting,ResistFalloff))
 			{
-				level_diff = (RuleI(Casting,ResistFalloff)-1) - caster->GetLevel();
+				level_diff = (RuleI(Casting,ResistFalloff)-1) - caster_level;
 				if(level_diff < 0)
 				{
 					level_diff = 0;
@@ -4407,7 +4415,7 @@ float Mob::ResistSpell(uint8 resist_type, uint16 spell_id, Mob *caster, bool use
 			}
 			else
 			{
-				level_diff = GetLevel() - caster->GetLevel();
+				level_diff = GetLevel() - caster_level;
 			}
 			level_mod += (2 * level_diff);
 		}
@@ -4518,14 +4526,14 @@ float Mob::ResistSpell(uint8 resist_type, uint16 spell_id, Mob *caster, bool use
 
 			if(IsNPC())
 			{
-				if(GetLevel() > caster->GetLevel() && GetLevel() >= 17 && caster->GetLevel() <= 50)
+				if(GetLevel() > caster_level && GetLevel() >= 17 && caster_level <= 50)
 				{
 					partial_modifier += 5;
 				}
 
-				if(GetLevel() >= 30 && caster->GetLevel() < 50)
+				if(GetLevel() >= 30 && caster_level < 50)
 				{
-					partial_modifier += (caster->GetLevel() - 25);
+					partial_modifier += (caster_level - 25);
 				}
 
 				if(GetLevel() < 15)
@@ -4536,9 +4544,9 @@ float Mob::ResistSpell(uint8 resist_type, uint16 spell_id, Mob *caster, bool use
 
 			if(caster->IsNPC())
 			{
-				if((GetLevel() - caster->GetLevel()) >= 20)
+				if((GetLevel() - caster_level) >= 20)
 				{
-					partial_modifier += (GetLevel() - caster->GetLevel()) * 1.5;
+					partial_modifier += (GetLevel() - caster_level) * 1.5;
 				}
 			}
 
@@ -4754,14 +4762,12 @@ void Client::UnStun() {
 
 void NPC::Stun(int duration) {
 	Mob::Stun(duration);
-	SetRunAnimSpeed(0);
-	SendPosition();
+	SetCurrentSpeed(0);
 }
 
 void NPC::UnStun() {
 	Mob::UnStun();
-	SetRunAnimSpeed(static_cast<int8>(GetRunspeed()));
-	SendPosition();
+	SetCurrentSpeed(GetRunspeed());
 }
 
 void Mob::Mesmerize()
@@ -5100,7 +5106,7 @@ bool Mob::IsCombatProc(uint16 spell_id) {
 	return false;
 }
 
-bool Mob::AddProcToWeapon(uint16 spell_id, bool bPerma, uint16 iChance, uint16 base_spell_id) {
+bool Mob::AddProcToWeapon(uint16 spell_id, bool bPerma, uint16 iChance, uint16 base_spell_id, int level_override) {
 	if(spell_id == SPELL_UNKNOWN)
 		return(false);
 
@@ -5111,6 +5117,7 @@ bool Mob::AddProcToWeapon(uint16 spell_id, bool bPerma, uint16 iChance, uint16 b
 				PermaProcs[i].spellID = spell_id;
 				PermaProcs[i].chance = iChance;
 				PermaProcs[i].base_spellID = base_spell_id;
+				PermaProcs[i].level_override = level_override;
 				Log.Out(Logs::Detail, Logs::Spells, "Added permanent proc spell %d with chance %d to slot %d", spell_id, iChance, i);
 
 				return true;
@@ -5123,6 +5130,7 @@ bool Mob::AddProcToWeapon(uint16 spell_id, bool bPerma, uint16 iChance, uint16 b
 				SpellProcs[i].spellID = spell_id;
 				SpellProcs[i].chance = iChance;
 				SpellProcs[i].base_spellID = base_spell_id;;
+				SpellProcs[i].level_override = level_override;
 				Log.Out(Logs::Detail, Logs::Spells, "Added spell-granted proc spell %d with chance %d to slot %d", spell_id, iChance, i);
 				return true;
 			}
@@ -5138,6 +5146,7 @@ bool Mob::RemoveProcFromWeapon(uint16 spell_id, bool bAll) {
 			SpellProcs[i].spellID = SPELL_UNKNOWN;
 			SpellProcs[i].chance = 0;
 			SpellProcs[i].base_spellID = SPELL_UNKNOWN;
+			SpellProcs[i].level_override = -1;
 			Log.Out(Logs::Detail, Logs::Spells, "Removed proc %d from slot %d", spell_id, i);
 		}
 	}

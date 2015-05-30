@@ -202,6 +202,7 @@ struct Buffs_Struct {
 	int32	caston_z;
 	int32	ExtraDIChance;
 	int16	RootBreakChance; //Not saved to dbase
+	uint32	instrument_mod;
 	bool	persistant_buff;
 	bool	client; //True if the caster is a client
 	bool	UpdateClient;
@@ -467,6 +468,7 @@ typedef struct
 	uint16 spellID;
 	uint16 chance;
 	uint16 base_spellID;
+	int level_override;
 } tProc;
 
 struct Shielders_Struct {
@@ -519,7 +521,8 @@ typedef enum {
 	petOther,
 	petCharmed,
 	petNPCFollow,
-	petTargetLock			//remain active as long something is on the hatelist. Don't listen to any commands
+	petTargetLock,			//remain active as long something is on the hatelist. Don't listen to any commands
+	petNone = 0xFF // not a pet
 } PetType;
 
 typedef enum {

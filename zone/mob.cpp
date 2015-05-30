@@ -26,6 +26,7 @@
 #include <limits.h>
 #include <math.h>
 #include <sstream>
+#include <algorithm>
 
 #ifdef BOTS
 #include "bot.h"
@@ -148,6 +149,28 @@ Mob::Mob(const char* in_name,
 	size		= in_size;
 	base_size	= size;
 	runspeed	= in_runspeed;
+	// neotokyo: sanity check
+	if (runspeed < 0 || runspeed > 20)
+		runspeed = 1.25f;
+	base_runspeed = (int)((float)runspeed * 40.0f);
+	// clients
+	if (runspeed == 0.7f) {
+		base_runspeed = 28;
+		walkspeed = 0.3f;
+		base_walkspeed = 12;
+		fearspeed = 0.625f;
+		base_fearspeed = 25;
+		// npcs
+	} else {
+		base_walkspeed = base_runspeed * 100 / 265;
+		walkspeed = ((float)base_walkspeed) * 0.025f;
+		base_fearspeed = base_runspeed * 100 / 127;
+		fearspeed = ((float)base_fearspeed) * 0.025f;
+	}
+
+
+	current_speed = base_runspeed;
+
 	m_PlayerState	= 0;
 
 
@@ -240,15 +263,19 @@ Mob::Mob(const char* in_name,
 		PermaProcs[j].spellID = SPELL_UNKNOWN;
 		PermaProcs[j].chance = 0;
 		PermaProcs[j].base_spellID = SPELL_UNKNOWN;
+		PermaProcs[j].level_override = -1;
 		SpellProcs[j].spellID = SPELL_UNKNOWN;
 		SpellProcs[j].chance = 0;
 		SpellProcs[j].base_spellID = SPELL_UNKNOWN;
+		SpellProcs[j].level_override = -1;
 		DefensiveProcs[j].spellID = SPELL_UNKNOWN;
 		DefensiveProcs[j].chance = 0;
 		DefensiveProcs[j].base_spellID = SPELL_UNKNOWN;
+		DefensiveProcs[j].level_override = -1;
 		RangedProcs[j].spellID = SPELL_UNKNOWN;
 		RangedProcs[j].chance = 0;
 		RangedProcs[j].base_spellID = SPELL_UNKNOWN;
+		RangedProcs[j].level_override = -1;
 	}
 
 	for (i = 0; i < _MaterialCount; i++)
@@ -311,7 +338,7 @@ Mob::Mob(const char* in_name,
 	pLastChange = 0;
 	SetPetID(0);
 	SetOwnerID(0);
-	typeofpet = petCharmed;		//default to charmed...
+	typeofpet = petNone; // default to not a pet
 	petpower = 0;
 	held = false;
 	nocast = false;
@@ -531,48 +558,32 @@ bool Mob::IsInvisible(Mob* other) const
 	return(false);
 }
 
-float Mob::_GetMovementSpeed(int mod) const
-{
-	// List of movement speed modifiers, including AAs & spells:
-	// http://everquest.allakhazam.com/db/item.html?item=1721;page=1;howmany=50#m10822246245352
-	if (IsRooted())
-		return 0.0f;
+int Mob::_GetWalkSpeed() const {
+
+	if (IsRooted() || IsStunned() || IsMezzed())
+		return 0;
+
 	else if (IsPseudoRooted())
-		return 0.00001f;
+		return 0;
 
-	float speed_mod = runspeed;
+	int aa_mod = 0;
+	int speed_mod = base_walkspeed;
+	int base_run = base_runspeed;
+	bool has_horse = false;
+	int runspeedcap = RuleI(Character,BaseRunSpeedCap);
+	runspeedcap += itembonuses.IncreaseRunSpeedCap + spellbonuses.IncreaseRunSpeedCap + aabonuses.IncreaseRunSpeedCap;
+	aa_mod += aabonuses.BaseMovementSpeed;
 
-	// These two cases ignore the cap, be wise in the DB for horses.
 	if (IsClient()) {
-		if (CastToClient()->GetGMSpeed()) {
-			speed_mod = 3.125f;
-			if (mod != 0)
-				speed_mod += speed_mod * static_cast<float>(mod) / 100.0f;
+		Mob *horse = entity_list.GetMob(CastToClient()->GetHorseId());
+		if (horse) {
+			speed_mod = horse->GetBaseRunspeed();
 			return speed_mod;
-		} else {
-			Mob *horse = entity_list.GetMob(CastToClient()->GetHorseId());
-			if (horse) {
-				speed_mod = horse->GetBaseRunspeed();
-				if (mod != 0)
-					speed_mod += speed_mod * static_cast<float>(mod) / 100.0f;
-				return speed_mod;
-			}
 		}
 	}
 
-	int aa_mod = 0;
-	int spell_mod = 0;
-	int runspeedcap = RuleI(Character,BaseRunSpeedCap);
+	int spell_mod = spellbonuses.movementspeed + itembonuses.movementspeed;
 	int movemod = 0;
-	float frunspeedcap = 0.0f;
-
-	runspeedcap += itembonuses.IncreaseRunSpeedCap + spellbonuses.IncreaseRunSpeedCap + aabonuses.IncreaseRunSpeedCap;
-	aa_mod += itembonuses.BaseMovementSpeed + spellbonuses.BaseMovementSpeed + aabonuses.BaseMovementSpeed;
-	spell_mod += spellbonuses.movementspeed + itembonuses.movementspeed;
-
-	// hard cap
-	if (runspeedcap > 225)
-		runspeedcap = 225;
 
 	if (spell_mod < 0)
 		movemod += spell_mod;
@@ -581,27 +592,189 @@ float Mob::_GetMovementSpeed(int mod) const
 	else
 		movemod = aa_mod;
 
-	// cap negative movemods from snares mostly
-	if (movemod < -85)
+	// hard cap
+	if (runspeedcap > 225)
+		runspeedcap = 225;
+
+	if(movemod < -85) //cap it at moving very very slow
 		movemod = -85;
 
-	if (movemod != 0)
-		speed_mod += speed_mod * static_cast<float>(movemod) / 100.0f;
+	if (!has_horse && movemod != 0)
+		speed_mod += (base_run * movemod / 100);
 
-	// runspeed caps
-	frunspeedcap = static_cast<float>(runspeedcap) / 100.0f;
-	if (IsClient() && speed_mod > frunspeedcap)
-		speed_mod = frunspeedcap;
+	if(speed_mod < 1)
+		return(0);
 
-	// apply final mod such as the -47 for walking
-	// use runspeed since it should stack with snares
-	// and if we get here, we know runspeed was the initial
-	// value before we applied movemod.
-	if (mod != 0)
-		speed_mod += runspeed * static_cast<float>(mod) / 100.0f;
+	//runspeed cap.
+	if(IsClient())
+	{
+		if(speed_mod > runspeedcap)
+			speed_mod = runspeedcap;
+	}
+	return speed_mod;
+}
 
-	if (speed_mod <= 0.0f)
-		speed_mod = IsClient() ? 0.0001f : 0.0f;
+int Mob::_GetRunSpeed() const {
+	if (IsRooted() || IsStunned() || IsMezzed())
+		return 0;
+
+	int aa_mod = 0;
+	int speed_mod = base_runspeed;
+	int base_walk = base_walkspeed;
+	bool has_horse = false;
+	if (IsClient())
+	{
+		if(CastToClient()->GetGMSpeed())
+		{
+			speed_mod = 325;
+		}
+		else
+		{
+			Mob* horse = entity_list.GetMob(CastToClient()->GetHorseId());
+			if(horse)
+			{
+				speed_mod = horse->GetBaseRunspeed();
+				base_walk = horse->GetBaseWalkspeed();
+				has_horse = true;
+			}
+		}
+	}
+
+	int runspeedcap = RuleI(Character,BaseRunSpeedCap);
+	runspeedcap += itembonuses.IncreaseRunSpeedCap + spellbonuses.IncreaseRunSpeedCap + aabonuses.IncreaseRunSpeedCap;
+
+	aa_mod = itembonuses.IncreaseRunSpeedCap + spellbonuses.IncreaseRunSpeedCap + aabonuses.IncreaseRunSpeedCap;
+	int spell_mod = spellbonuses.movementspeed + itembonuses.movementspeed;
+	int movemod = 0;
+
+	if(spell_mod < 0)
+	{
+		movemod += spell_mod;
+	}
+	else if(spell_mod > aa_mod)
+	{
+		movemod = spell_mod;
+	}
+	else
+	{
+		movemod = aa_mod;
+	}
+
+	if(movemod < -85) //cap it at moving very very slow
+		movemod = -85;
+
+	if (!has_horse && movemod != 0)
+	{
+		if (IsClient())
+		{
+			speed_mod += (speed_mod * movemod / 100);
+		} else {
+			if (movemod < 0) {
+				speed_mod += (50 * movemod / 100);
+				// basically stoped
+				if(speed_mod < 1)
+				{
+					return(0);
+				}
+				// moving slowly
+				if (speed_mod < 8)
+					return(8);
+			} else {
+				speed_mod += GetBaseWalkspeed();
+				if (movemod > 50)
+					speed_mod += 4;
+				if (movemod > 40)
+					speed_mod += 3;
+			}
+		}
+	}
+
+	if(speed_mod < 1)
+	{
+		return(0);
+	}
+	//runspeed cap.
+	if(IsClient())
+	{
+		if(speed_mod > runspeedcap)
+			speed_mod = runspeedcap;
+	}
+	return speed_mod;
+}
+
+int Mob::_GetFearSpeed() const {
+
+	if (IsRooted() || IsStunned() || IsMezzed())
+		return 0;
+
+	//float speed_mod = fearspeed;
+	int speed_mod = GetBaseFearSpeed();
+
+	// use a max of 1.75f in calcs.
+	int base_run = std::min(GetBaseRunspeed(), 70);
+
+	int spell_mod = spellbonuses.movementspeed + itembonuses.movementspeed;
+	int movemod = 0;
+
+	if(spell_mod < 0)
+	{
+		movemod += spell_mod;
+	}
+
+	if(movemod < -85) //cap it at moving very very slow
+		movemod = -85;
+
+	if (IsClient()) {
+		if (CastToClient()->IsRunning())
+			speed_mod = GetBaseRunspeed();
+		else
+			speed_mod = GetBaseWalkspeed();
+		if (movemod < 0)
+			return GetBaseWalkspeed();
+		speed_mod += (base_run * movemod / 100);
+		return speed_mod;
+	} else {
+		int hp_ratio = GetIntHPRatio();
+		// very large snares 50% or higher
+		if (movemod < -49)
+		{
+			if (hp_ratio < 25)
+			{
+				return (0);
+			}
+			if (hp_ratio < 50)
+				return (8);
+			else
+				return (12);
+		}
+		if (hp_ratio < 5) {
+			speed_mod = base_walkspeed / 3;
+		} else if (hp_ratio < 15) {
+			speed_mod = base_walkspeed / 2;
+		} else if (hp_ratio < 25) {
+			speed_mod = base_walkspeed + 1; // add the +1 so they do the run animation
+		} else if (hp_ratio < 50) {
+			speed_mod *= 82;
+			speed_mod /= 100;
+		}
+		if (movemod > 0) {
+			speed_mod += GetBaseWalkspeed();
+			if (movemod > 50)
+				speed_mod += 4;
+			if (movemod > 40)
+				speed_mod += 3;
+			return speed_mod;
+		}
+		else if (movemod < 0) {
+			speed_mod += (base_run * movemod / 100);
+		}
+	}
+	if (speed_mod < 1)
+		return (0);
+	if (speed_mod < 9)
+		return (8);
+	if (speed_mod < 13)
+		return (12);
 
 	return speed_mod;
 }
@@ -1201,7 +1374,6 @@ void Mob::SendPosition()
 	PlayerPositionUpdateServer_Struct* spu = (PlayerPositionUpdateServer_Struct*)app->pBuffer;
 	MakeSpawnUpdateNoDelta(spu);
 	move_tic_count = 0;
-	tar_ndx = 20;
 	entity_list.QueueClients(this, app, true);
 	safe_delete(app);
 }
@@ -1303,7 +1475,7 @@ void Mob::ShowStats(Client* client)
 			if(n->respawn2 != 0)
 				spawngroupid = n->respawn2->SpawnGroupID();
 			client->Message(0, "  NPCID: %u  SpawnGroupID: %u Grid: %i LootTable: %u FactionID: %i SpellsID: %u ", GetNPCTypeID(),spawngroupid, n->GetGrid(), n->GetLoottableID(), n->GetNPCFactionID(), n->GetNPCSpellsID());
-			client->Message(0, "  Accuracy: %i MerchantID: %i EmoteID: %i Runspeed: %f Walkspeed: %f", n->GetAccuracyRating(), n->MerchantType, n->GetEmoteID(), n->GetRunspeed(), n->GetWalkspeed());
+			client->Message(0, "  Accuracy: %i MerchantID: %i EmoteID: %i Runspeed: %u Walkspeed: %u", n->GetAccuracyRating(), n->MerchantType, n->GetEmoteID(), n->GetRunspeed(), n->GetWalkspeed());
 			n->QueryLoot(client);
 		}
 		if (IsAIControlled()) {
@@ -2124,8 +2296,10 @@ void Mob::SetOwnerID(uint16 NewOwnerID) {
 	if (NewOwnerID == GetID() && NewOwnerID != 0) // ok, no charming yourself now =p
 		return;
 	ownerid = NewOwnerID;
-	if (ownerid == 0 && this->IsNPC() && this->GetPetType() != petCharmed)
-		this->Depop();
+	// if we're setting the owner ID to 0 and they're not either charmed or not-a-pet then
+	// they're a normal pet and should be despawned
+	if (ownerid == 0 && IsNPC() && GetPetType() != petCharmed && GetPetType() != petNone)
+		Depop();
 }
 
 // used in checking for behind (backstab) and checking in front (melee LoS)
@@ -2992,7 +3166,7 @@ int32 Mob::GetActSpellCasttime(uint16 spell_id, int32 casttime) {
 	return casttime;
 }
 
-void Mob::ExecWeaponProc(const ItemInst *inst, uint16 spell_id, Mob *on) {
+void Mob::ExecWeaponProc(const ItemInst *inst, uint16 spell_id, Mob *on, int level_override) {
 	// Changed proc targets to look up based on the spells goodEffect flag.
 	// This should work for the majority of weapons.
 	if(spell_id == SPELL_UNKNOWN || on->GetSpecialAbility(NO_HARM_FROM_CLIENT)) {
@@ -3031,14 +3205,14 @@ void Mob::ExecWeaponProc(const ItemInst *inst, uint16 spell_id, Mob *on) {
 		twinproc = true;
 
 	if (IsBeneficialSpell(spell_id)) {
-		SpellFinished(spell_id, this, 10, 0, -1, spells[spell_id].ResistDiff, true);
+		SpellFinished(spell_id, this, 10, 0, -1, spells[spell_id].ResistDiff, true, level_override);
 		if(twinproc)
-			SpellOnTarget(spell_id, this, false, false, 0, true);
+			SpellOnTarget(spell_id, this, false, false, 0, true, level_override);
 	}
 	else if(!(on->IsClient() && on->CastToClient()->dead)) { //dont proc on dead clients
-		SpellFinished(spell_id, on, 10, 0, -1, spells[spell_id].ResistDiff, true);
+		SpellFinished(spell_id, on, 10, 0, -1, spells[spell_id].ResistDiff, true, level_override);
 		if(twinproc)
-			SpellOnTarget(spell_id, on, false, false, 0, true);
+			SpellOnTarget(spell_id, on, false, false, 0, true, level_override);
 	}
 	return;
 }
@@ -5437,3 +5611,15 @@ void Mob::SendRemovePlayerState(PlayerState old_state)
 	safe_delete(app);
 }
 
+void Mob::SetCurrentSpeed(int in){
+	if (current_speed != in)
+	{
+		current_speed = in;
+		tar_ndx = 20;
+		if (in == 0) {
+			SetRunAnimSpeed(0);
+			SetMoving(false);
+			SendPosition();
+		}
+	}
+}

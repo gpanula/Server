@@ -339,9 +339,7 @@ bool NPC::AIDoSpellCast(uint8 i, Mob* tar, int32 mana_cost, uint32* oDontDoAgain
 
 	//stop moving if were casting a spell and were not a bard...
 	if(!IsBardSong(AIspells[i].spellid)) {
-		SetRunAnimSpeed(0);
-		SendPosition();
-		SetMoving(false);
+		SetCurrentSpeed(0);
 	}
 
 	return CastSpell(AIspells[i].spellid, tar->GetID(), 1, AIspells[i].manacost == -2 ? 0 : -1, mana_cost, oDontDoAgainBefore, -1, -1, 0, 0, &(AIspells[i].resist_adjust));
@@ -698,9 +696,7 @@ void Client::AI_SpellCast()
 			{
 				if(!IsBardSong(spell_to_cast))
 				{
-					SetRunAnimSpeed(0);
-					SendPosition();
-					SetMoving(false);
+					SetCurrentSpeed(0);
 				}
 				CastSpell(spell_to_cast, tar->GetID(), slot_to_use);
 				return;
@@ -714,9 +710,7 @@ void Client::AI_SpellCast()
 		{
 			if(!IsBardSong(spell_to_cast))
 			{
-				SetRunAnimSpeed(0);
-				SendPosition();
-				SetMoving(false);
+				SetCurrentSpeed(0);
 			}
 			CastSpell(spell_to_cast, tar->GetID(), slot_to_use);
 			return;
@@ -772,16 +766,13 @@ void Client::AI_Process()
 				{
 					if(GetTarget())
 						SetHeading(CalculateHeadingToTarget(GetTarget()->GetX(), GetTarget()->GetY()));
-					SetRunAnimSpeed(0);
-					SendPosition();
-					SetMoving(false);
-					moved=false;
+					SetCurrentSpeed(0);
 				}
 				//continue on to attack code, ensuring that we execute the engaged code
 				engaged = true;
 			} else {
 				if(AImovement_timer->Check()) {
-					animation = GetRunspeed() * 21;
+					//animation = GetFearSpeed() * 21;
 					// Check if we have reached the last fear point
 					if ((std::abs(GetX() - m_FearWalkTarget.x) < 0.1) &&
 					    (std::abs(GetY() - m_FearWalkTarget.y) < 0.1)) {
@@ -839,16 +830,13 @@ void Client::AI_Process()
 			}
 
 			if (AImovement_timer->Check()) {
-				SetRunAnimSpeed(0);
+				if(CalculateHeadingToTarget(GetTarget()->GetX(), GetTarget()->GetY()) != m_Position.w)
+				{
+					SetHeading(CalculateHeadingToTarget(GetTarget()->GetX(), GetTarget()->GetY()));
+					SendPosition();
+				}
+				SetCurrentSpeed(0);
 			}
-			if(IsMoving()) {
-				SetMoving(false);
-				moved=false;
-				SetHeading(CalculateHeadingToTarget(GetTarget()->GetX(), GetTarget()->GetY()));
-				SendPosition();
-				tar_ndx =0;
-			}
-
 			if(GetTarget() && !IsStunned() && !IsMezzed() && !GetFeigned()) {
 				if(attack_timer.Check()) {
 					Attack(GetTarget(), MainPrimary);
@@ -944,28 +932,27 @@ void Client::AI_Process()
 		{
 			if(!IsRooted())
 			{
-				animation = 21 * GetRunspeed();
-				if(!RuleB(Pathing, Aggro) || !zone->pathing)
-					CalculateNewPosition2(GetTarget()->GetX(), GetTarget()->GetY(), GetTarget()->GetZ(), GetRunspeed());
-				else
+				if(AImovement_timer->Check())
 				{
-					bool WaypointChanged, NodeReached;
-					glm::vec3 Goal = UpdatePath(GetTarget()->GetX(), GetTarget()->GetY(), GetTarget()->GetZ(),
-						GetRunspeed(), WaypointChanged, NodeReached);
+					if(!RuleB(Pathing, Aggro) || !zone->pathing)
+						CalculateNewPosition2(GetTarget()->GetX(), GetTarget()->GetY(), GetTarget()->GetZ(), GetRunspeed());
+					else
+					{
+						bool WaypointChanged, NodeReached;
+						glm::vec3 Goal = UpdatePath(GetTarget()->GetX(), GetTarget()->GetY(), GetTarget()->GetZ(),
+							GetRunspeed(), WaypointChanged, NodeReached);
 
-					if(WaypointChanged)
-						tar_ndx = 20;
+						if(WaypointChanged)
+							tar_ndx = 20;
 
-					CalculateNewPosition2(Goal.x, Goal.y, Goal.z, GetRunspeed());
+						CalculateNewPosition2(Goal.x, Goal.y, Goal.z, GetRunspeed());
+					}
 				}
 			}
 			else if(IsMoving())
 			{
 				SetHeading(CalculateHeadingToTarget(GetTarget()->GetX(), GetTarget()->GetY()));
-				SetRunAnimSpeed(0);
-				SendPosition();
-				SetMoving(false);
-				moved=false;
+				SetCurrentSpeed(0);
 			}
 		}
 		AI_SpellCast();
@@ -998,21 +985,23 @@ void Client::AI_Process()
 				return;
 
 			float dist = DistanceSquared(m_Position, owner->GetPosition());
-			if (dist >= 100)
+			if (dist >= 400)
 			{
-				float speed = dist >= 225 ? GetRunspeed() : GetWalkspeed();
-				animation = 21 * speed;
-				CalculateNewPosition2(owner->GetX(), owner->GetY(), owner->GetZ(), speed);
+				if(AImovement_timer->Check())
+				{
+					int speed = GetWalkspeed();
+					if (dist >= 5625)
+						speed = GetRunspeed();
+							
+					CalculateNewPosition2(owner->GetX(), owner->GetY(), owner->GetZ(), speed);
+				}
 			}
 			else
 			{
-				SetHeading(owner->GetHeading());
 				if(moved)
 				{
-					moved=false;
-					SetMoving(false);
-					SendPosition();
-					SetRunAnimSpeed(0);
+					SetCurrentSpeed(0);
+					moved = false;
 				}
 			}
 		}
@@ -1042,9 +1031,7 @@ void Mob::AI_Process() {
 				{
 					if(target)
 						SetHeading(CalculateHeadingToTarget(target->GetX(), target->GetY()));
-					SetRunAnimSpeed(0);
-					SendPosition();
-					SetMoving(false);
+					SetCurrentSpeed(0);
 					moved=false;
 				}
 				//continue on to attack code, ensuring that we execute the engaged code
@@ -1058,7 +1045,9 @@ void Mob::AI_Process() {
 						CalculateNewFearpoint();
 					}
 					if(!RuleB(Pathing, Fear) || !zone->pathing)
+					{
 						CalculateNewPosition2(m_FearWalkTarget.x, m_FearWalkTarget.y, m_FearWalkTarget.z, GetFearSpeed(), true);
+					}
 					else
 					{
 						bool WaypointChanged, NodeReached;
@@ -1156,15 +1145,21 @@ void Mob::AI_Process() {
 		{
 			if (AImovement_timer->Check())
 			{
-				SetRunAnimSpeed(0);
+				if(CalculateHeadingToTarget(GetTarget()->GetX(), GetTarget()->GetY()) != m_Position.w)
+				{
+					SetHeading(CalculateHeadingToTarget(GetTarget()->GetX(), GetTarget()->GetY()));
+					SendPosition();
+				}
+				SetCurrentSpeed(0);
 			}
 			if(IsMoving())
 			{
-				SetMoving(false);
-				moved=false;
-				SetHeading(CalculateHeadingToTarget(target->GetX(), target->GetY()));
-				SendPosition();
-				tar_ndx =0;
+				if(CalculateHeadingToTarget(GetTarget()->GetX(), GetTarget()->GetY()) != m_Position.w)
+				{
+					SetHeading(CalculateHeadingToTarget(GetTarget()->GetX(), GetTarget()->GetY()));
+					SendPosition();
+				}
+				SetCurrentSpeed(0);
 			}
 
 			//casting checked above...
@@ -1369,7 +1364,7 @@ void Mob::AI_Process() {
 					CastToNPC()->DoClassAttacks(target);
 			}
 			AI_EngagedCastCheck();
-		}	//end is within combat range
+		}	//end is within combat rangepet
 		else {
 			//we cannot reach our target...
 			//underwater stuff only works with water maps in the zone!
@@ -1425,10 +1420,7 @@ void Mob::AI_Process() {
 					}
 					else if(IsMoving()) {
 						SetHeading(CalculateHeadingToTarget(target->GetX(), target->GetY()));
-						SetRunAnimSpeed(0);
-						SendPosition();
-						SetMoving(false);
-						moved=false;
+						SetCurrentSpeed(0);
 
 					}
 				}
@@ -1481,7 +1473,6 @@ void Mob::AI_Process() {
 		}
 		else if (AImovement_timer->Check() && !IsRooted())
 		{
-			SetRunAnimSpeed(0);
 			if (IsPet())
 			{
 				// we're a pet, do as we're told
@@ -1500,18 +1491,18 @@ void Mob::AI_Process() {
 						float dist = DistanceSquared(m_Position, owner->GetPosition());
 						if (dist >= 400)
 						{
-							float speed = GetWalkspeed();
+							int speed = GetWalkspeed();
 							if (dist >= 5625)
 								speed = GetRunspeed();
+							
 							CalculateNewPosition2(owner->GetX(), owner->GetY(), owner->GetZ(), speed);
 						}
 						else
 						{
 							if(moved)
 							{
-								moved=false;
-								SetMoving(false);
-								SendPosition();
+								SetCurrentSpeed(0);
+								moved = false;
 							}
 						}
 
@@ -1557,19 +1548,15 @@ void Mob::AI_Process() {
 
 					if (dist2 >= followdist)	// Default follow distance is 100
 					{
-						float speed = GetWalkspeed();
+						int speed = GetWalkspeed();
 						if (dist2 >= followdist + 150)
 							speed = GetRunspeed();
 						CalculateNewPosition2(follow->GetX(), follow->GetY(), follow->GetZ(), speed);
 					}
 					else
 					{
-						if(moved)
-						{
-							SendPosition();
-							moved=false;
-							SetMoving(false);
-						}
+						moved = false;
+						SetCurrentSpeed(0);
 					}
 				}
 			}
@@ -1689,11 +1676,10 @@ void NPC::AI_DoMovement() {
 					sprintf(temp, "%d", cur_wp);
 					parse->EventNPC(EVENT_WAYPOINT_ARRIVE, CastToNPC(), nullptr, temp, 0);
 					// start moving directly to next waypoint if we're at a 0 pause waypoint and we didn't get quest halted.
-						if (!AIwalking_timer->Enabled())
-							AI_SetupNextWaypoint();
-						else
-							doMove = false;
-
+					if (!AIwalking_timer->Enabled())
+						AI_SetupNextWaypoint();
+					else
+						doMove = false;
 					// wipe feign memory since we reached our first waypoint
 					if(cur_wp == 1)
 						ClearFeignMemory();
@@ -1763,19 +1749,19 @@ void NPC::AI_DoMovement() {
 				Log.Out(Logs::Detail, Logs::AI, "Reached guard point (%.3f,%.3f,%.3f)", m_GuardPoint.x, m_GuardPoint.y, m_GuardPoint.z);
 				ClearFeignMemory();
 				moved=false;
-				SetMoving(false);
 				if (GetTarget() == nullptr || DistanceSquared(m_Position, GetTarget()->GetPosition()) >= 5*5 )
 				{
 					SetHeading(m_GuardPoint.w);
 				} else {
 					FaceTarget(GetTarget());
 				}
-				SendPosition();
+				SetCurrentSpeed(0);
 				SetAppearance(GetGuardPointAnim());
 			}
 		}
 	}
 }
+
 void NPC::AI_SetupNextWaypoint() {
 	int32 spawn_id = this->GetSpawnPointID();
 	LinkedListIterator<Spawn2*> iterator(zone->spawn2_list);
@@ -1889,9 +1875,10 @@ void Mob::AI_Event_NoLongerEngaged() {
 		pLastFightingDelayMoving += zone->random.Int(minLastFightingDelayMoving, maxLastFightingDelayMoving);
 	// So mobs don't keep running as a ghost until AIwalking_timer fires
 	// if they were moving prior to losing all hate
-	if(IsMoving()){
+	// except if we're a pet, then we might run into some issues with pets backing off when they should immediately be moving
+	if(!IsPet())
+	{
 		SetRunAnimSpeed(0);
-		SetMoving(false);
 		SendPosition();
 	}
 	ClearRampage();
@@ -2565,11 +2552,9 @@ void NPC::ApplyAISpellEffects(StatBonuses* newbon)
 	if (!AI_HasSpellsEffects())
 		return;
 
-	for(int i=0; i < AIspellsEffects.size(); i++)
-	{
-		ApplySpellsBonuses(0, 0, newbon, 0, 0, 0,-1,
-			true, AIspellsEffects[i].spelleffectid,  AIspellsEffects[i].base, AIspellsEffects[i].limit,AIspellsEffects[i].max);
-	}
+	for (int i = 0; i < AIspellsEffects.size(); i++)
+		ApplySpellsBonuses(0, 0, newbon, 0, 0, 0, -1, 10, true, AIspellsEffects[i].spelleffectid,
+				   AIspellsEffects[i].base, AIspellsEffects[i].limit, AIspellsEffects[i].max);
 
 	return;
 }
