@@ -389,6 +389,7 @@ void MapOpcodes()
 	ConnectedOpcodes[OP_XTargetRequest] = &Client::Handle_OP_XTargetRequest;
 	ConnectedOpcodes[OP_YellForHelp] = &Client::Handle_OP_YellForHelp;
 	ConnectedOpcodes[OP_ZoneChange] = &Client::Handle_OP_ZoneChange;
+	ConnectedOpcodes[OP_ResetAA] = &Client::Handle_OP_ResetAA;
 }
 
 void ClearMappedOpcode(EmuOpcode op)
@@ -1082,7 +1083,7 @@ void Client::Handle_Connect_OP_ReqNewZone(const EQApplicationPacket *app)
 
 void Client::Handle_Connect_OP_SendAAStats(const EQApplicationPacket *app)
 {
-	SendAATimers();
+	SendAlternateAdvancementTimers();
 	EQApplicationPacket* outapp = new EQApplicationPacket(OP_SendAAStats, 0);
 	QueuePacket(outapp);
 	safe_delete(outapp);
@@ -1091,7 +1092,7 @@ void Client::Handle_Connect_OP_SendAAStats(const EQApplicationPacket *app)
 
 void Client::Handle_Connect_OP_SendAATable(const EQApplicationPacket *app)
 {
-	SendAAList();
+	SendAlternateAdvancementTable();
 	return;
 }
 
@@ -1152,7 +1153,7 @@ void Client::Handle_Connect_OP_TGB(const EQApplicationPacket *app)
 
 void Client::Handle_Connect_OP_UpdateAA(const EQApplicationPacket *app)
 {
-	SendAATable();
+	SendAlternateAdvancementPoints();
 }
 
 void Client::Handle_Connect_OP_WearChange(const EQApplicationPacket *app)
@@ -1439,48 +1440,15 @@ void Client::Handle_Connect_OP_ZoneEntry(const EQApplicationPacket *app)
 	if (m_pp.ldon_points_tak < 0 || m_pp.ldon_points_tak > 2000000000){ m_pp.ldon_points_tak = 0; }
 	if (m_pp.ldon_points_available < 0 || m_pp.ldon_points_available > 2000000000){ m_pp.ldon_points_available = 0; }
 
-	/* Initialize AA's : Move to function eventually */
-	for (uint32 a = 0; a < MAX_PP_AA_ARRAY; a++){ aa[a] = &m_pp.aa_array[a]; }
-	query = StringFormat(
-		"SELECT								"
-		"slot,							    "
-		"aa_id,								"
-		"aa_value							"
-		"FROM								"
-		"`character_alternate_abilities`    "
-		"WHERE `id` = %u ORDER BY `slot`", this->CharacterID());
-	results = database.QueryDatabase(query); i = 0;
-	for (auto row = results.begin(); row != results.end(); ++row) {
-		i = atoi(row[0]);
-		m_pp.aa_array[i].AA = atoi(row[1]);
-		m_pp.aa_array[i].value = atoi(row[2]);
-		aa[i]->AA = atoi(row[1]);
-		aa[i]->value = atoi(row[2]);
+	if(RuleB(World, UseClientBasedExpansionSettings)) {
+		m_pp.expansions = ExpansionFromClientVersion(GetClientVersion());
 	}
-	for (uint32 a = 0; a < MAX_PP_AA_ARRAY; a++){
-		uint32 id = aa[a]->AA;
-		//watch for invalid AA IDs
-		if (id == aaNone)
-			continue;
-		if (id >= aaHighestID) {
-			aa[a]->AA = aaNone;
-			aa[a]->value = 0;
-			continue;
-		}
-		if (aa[a]->value == 0) {
-			aa[a]->AA = aaNone;
-			continue;
-		}
-		if (aa[a]->value > HIGHEST_AA_VALUE) {
-			aa[a]->AA = aaNone;
-			aa[a]->value = 0;
-			continue;
-		}
+	else {
+		m_pp.expansions = RuleI(World, ExpansionSettings);
+	}
 
-		if (aa[a]->value > 1)	/* hack in some stuff for sony's new AA method (where each level of each aa.has a seperate ID) */
-			aa_points[(id - aa[a]->value + 1)] = aa[a]->value;
-		else
-			aa_points[id] = aa[a]->value;
+	if(!database.LoadAlternateAdvancement(this)) {
+		Log.Out(Logs::General, Logs::Error, "Error loading AA points for %s", GetName());
 	}
 
 	if (SPDAT_RECORDS > 0) {
@@ -1604,11 +1572,6 @@ void Client::Handle_Connect_OP_ZoneEntry(const EQApplicationPacket *app)
 
 	/* Update LFP in case any (or all) of our group disbanded while we were zoning. */
 	if (IsLFP()) { UpdateLFP(); }
-
-	/* Get Expansions from variables table and ship via PP */
-	char val[20] = { 0 };
-	if (database.GetVariable("Expansions", val, 20)){ m_pp.expansions = atoi(val); }
-	else{ m_pp.expansions = 0x3FF; }
 
 	p_timers.SetCharID(CharacterID());
 	if (!p_timers.Load(&database)) {
@@ -1784,38 +1747,39 @@ void Client::Handle_OP_AAAction(const EQApplicationPacket *app)
 	Log.Out(Logs::Detail, Logs::AA, "Received OP_AAAction");
 
 	if (app->size != sizeof(AA_Action)){
-		printf("Error! OP_AAAction size didnt match!\n");
+		Log.Out(Logs::General, Logs::AA, "Error! OP_AAAction size didnt match!");
 		return;
 	}
 	AA_Action* action = (AA_Action*)app->pBuffer;
 
 	if (action->action == aaActionActivate) {//AA Hotkey
 		Log.Out(Logs::Detail, Logs::AA, "Activating AA %d", action->ability);
-		ActivateAA((aaID)action->ability);
+		ActivateAlternateAdvancementAbility(action->ability, action->target_id);
 	}
 	else if (action->action == aaActionBuy) {
-		BuyAA(action);
+		PurchaseAlternateAdvancementRank(action->ability);
 	}
 	else if (action->action == aaActionDisableEXP){ //Turn Off AA Exp
 		if (m_epp.perAA > 0)
 			Message_StringID(0, AA_OFF);
+
 		m_epp.perAA = 0;
-		SendAAStats();
+		SendAlternateAdvancementStats();
 	}
 	else if (action->action == aaActionSetEXP) {
 		if (m_epp.perAA == 0)
 			Message_StringID(0, AA_ON);
 		m_epp.perAA = action->exp_value;
-		if (m_epp.perAA<0 || m_epp.perAA>100) m_epp.perAA = 0;	// stop exploit with sanity check
+		if (m_epp.perAA < 0 || m_epp.perAA > 100) 
+			m_epp.perAA = 0;	// stop exploit with sanity check
+
 		// send an update
-		SendAAStats();
-		SendAATable();
+		SendAlternateAdvancementStats();
+		SendAlternateAdvancementTable();
 	}
 	else {
-		printf("Unknown AA action: %u %u 0x%x %d\n", action->action, action->ability, action->unknown08, action->exp_value);
+		Log.Out(Logs::General, Logs::AA, "Unknown AA action : %u %u %u %d", action->action, action->ability, action->target_id, action->exp_value);
 	}
-
-	return;
 }
 
 void Client::Handle_OP_AcceptNewTask(const EQApplicationPacket *app)
@@ -3888,8 +3852,6 @@ void Client::Handle_OP_CastSpell(const EQApplicationPacket *app)
 			return;
 		}
 
-        m_TargetRing = glm::vec3(castspell->x_pos, castspell->y_pos, castspell->z_pos);
-
 		CastSpell(spell_to_cast, castspell->target_id, castspell->slot);
 	}
 	/* Spell Slot or Potion Belt Slot */
@@ -4447,9 +4409,20 @@ void Client::Handle_OP_ClientUpdate(const EQApplicationPacket *app)
 
 	// Outgoing client packet
 	float tmpheading = EQ19toFloat(ppu->heading);
+	/* The clients send an update at best every 1.3 seconds
+	 * We want to avoid reflecting these updates to other clients as much as possible
+	 * The client also sends an update every 280 ms while turning, if we prevent
+	 * sending these by checking if the location is the same too aggressively, clients end up spinning
+	 * so keep a count of how many packets are the same within a tolerance and stop when we get there */
 
-	if (!FCMP(ppu->y_pos, m_Position.y) || !FCMP(ppu->x_pos, m_Position.x) || !FCMP(tmpheading, m_Position.w) || ppu->animation != animation)
+	bool pos_same = FCMP(ppu->y_pos, m_Position.y) && FCMP(ppu->x_pos, m_Position.x) && FCMP(tmpheading, m_Position.w) && ppu->animation == animation;
+	if (!pos_same || (pos_same && position_update_same_count < 6))
 	{
+		if (pos_same)
+			position_update_same_count++;
+		else
+			position_update_same_count = 0;
+
 		m_Position.x = ppu->x_pos;
 		m_Position.y = ppu->y_pos;
 		m_Position.z = ppu->z_pos;
@@ -6035,7 +6008,7 @@ void Client::Handle_OP_GMSearchCorpse(const EQApplicationPacket *app)
 	char *escSearchString = new char[129];
 	database.DoEscapeString(escSearchString, gmscs->Name, strlen(gmscs->Name));
 
-	std::string query = StringFormat("SELECT charname, zoneid, x, y, z, time_of_death, rezzed, IsBurried "
+	std::string query = StringFormat("SELECT charname, zoneid, x, y, z, time_of_death, is_rezzed, is_buried "
 		"FROM character_corpses WheRE charname LIKE '%%%s%%' ORDER BY charname LIMIT %i",
 		escSearchString, maxResults);
 	safe_delete_array(escSearchString);
@@ -6354,10 +6327,15 @@ void Client::Handle_OP_GroupDisband(const EQApplicationPacket *app)
 				Bot::ProcessBotGroupDisband(this, std::string());
 			}
 			else {
-				Mob* tempMember = entity_list.GetMob(gd->name2);
-				if (tempMember) {
-					if (tempMember->IsBot())
-						Bot::ProcessBotGroupDisband(this, std::string(tempMember->GetCleanName()));
+				Mob* tempMember = entity_list.GetMob(gd->name1); //Name1 is the target you are disbanding
+				if (tempMember && tempMember->IsBot()) {
+					tempMember->CastToBot()->RemoveBotFromGroup(tempMember->CastToBot(), group);
+					if (LFP)
+					{
+						// If we are looking for players, update to show we are on our own now.
+						UpdateLFP();
+					}
+					return; //No need to continue from here we were removing a bot from party
 				}
 			}
 		}
@@ -8826,7 +8804,7 @@ void Client::Handle_OP_LFGuild(const EQApplicationPacket *app)
 		pack->WriteUInt32(QSG_LFGuild_UpdatePlayerInfo);
 		pack->WriteUInt32(GetBaseClass());
 		pack->WriteUInt32(GetLevel());
-		pack->WriteUInt32(GetAAPointsSpent());
+		pack->WriteUInt32(GetSpentAA());
 		pack->WriteString(pts->Comment);
 		pack->WriteUInt32(pts->Toggle);
 		pack->WriteUInt32(pts->TimeZone);
@@ -11810,6 +11788,18 @@ void Client::Handle_OP_SetGuildMOTD(const EQApplicationPacket *app)
 
 void Client::Handle_OP_SetRunMode(const EQApplicationPacket *app)
 {
+	if (app->size < sizeof(SetRunMode_Struct)) {
+		Log.Out(Logs::General, Logs::Error, "Received invalid sized "
+			"OP_SetRunMode: got %d, expected %d", app->size,
+			sizeof(SetRunMode_Struct));
+		DumpPacket(app);
+		return;
+	}
+	SetRunMode_Struct* rms = (SetRunMode_Struct*)app->pBuffer;
+	if (rms->mode)
+		runmode = true;
+	else
+		runmode = false;
 	return;
 }
 
@@ -12242,20 +12232,29 @@ void Client::Handle_OP_ShopPlayerBuy(const EQApplicationPacket *app)
 		qsaudit->items[0].item_id = item->ID;
 		qsaudit->items[0].charges = mpo->quantity;
 
-		if (freeslotid == INVALID_INDEX) {
+		const ItemInst* audit_inst = m_inv[freeslotid];
+
+		if (audit_inst) {
+			qsaudit->items[0].aug_1 = audit_inst->GetAugmentItemID(0);
+			qsaudit->items[0].aug_2 = audit_inst->GetAugmentItemID(1);
+			qsaudit->items[0].aug_3 = audit_inst->GetAugmentItemID(2);
+			qsaudit->items[0].aug_4 = audit_inst->GetAugmentItemID(3);
+			qsaudit->items[0].aug_5 = audit_inst->GetAugmentItemID(4);
+		}
+		else {
 			qsaudit->items[0].aug_1 = 0;
 			qsaudit->items[0].aug_2 = 0;
 			qsaudit->items[0].aug_3 = 0;
 			qsaudit->items[0].aug_4 = 0;
 			qsaudit->items[0].aug_5 = 0;
+
+			if (freeslotid != INVALID_INDEX) {
+				Log.Out(Logs::General, Logs::Error, "Handle_OP_ShopPlayerBuy: QS Audit could not locate merchant (%u) purchased item in player (%u) inventory slot (%i)",
+					qsaudit->merchant_id, qsaudit->char_id, freeslotid);
+			}
 		}
-		else {
-			qsaudit->items[0].aug_1 = m_inv[freeslotid]->GetAugmentItemID(0);
-			qsaudit->items[0].aug_2 = m_inv[freeslotid]->GetAugmentItemID(1);
-			qsaudit->items[0].aug_3 = m_inv[freeslotid]->GetAugmentItemID(2);
-			qsaudit->items[0].aug_4 = m_inv[freeslotid]->GetAugmentItemID(3);
-			qsaudit->items[0].aug_5 = m_inv[freeslotid]->GetAugmentItemID(4);
-		}
+
+		audit_inst = nullptr;
 
 		qspack->Deflate();
 		if (worldserver.Connected()) { worldserver.SendPacket(qspack); }
@@ -12892,7 +12891,7 @@ void Client::Handle_OP_TargetCommand(const EQApplicationPacket *app)
 						inspect_buffs = group->GetLeadershipAA(groupAAInspectBuffs);
 				}
 			}
-			if (nt == this || inspect_buffs || (nt->IsClient() && !nt->CastToClient()->GetPVP()) ||
+			if (GetGM() || RuleB(Spells, AlwaysSendTargetsBuffs) || nt == this || inspect_buffs || (nt->IsClient() && !nt->CastToClient()->GetPVP()) ||
 					(nt->IsPet() && nt->GetOwner() && nt->GetOwner()->IsClient() && !nt->GetOwner()->CastToClient()->GetPVP()) ||
 					(nt->IsMerc() && nt->GetOwner() && nt->GetOwner()->IsClient() && !nt->GetOwner()->CastToClient()->GetPVP()))
 				nt->SendBuffsToClient(this);
@@ -14190,9 +14189,12 @@ void Client::Handle_OP_YellForHelp(const EQApplicationPacket *app)
 	return;
 }
 
-/*
-void Client::Handle_OP_ZoneChange(const EQApplicationPacket *app)
+void Client::Handle_OP_ResetAA(const EQApplicationPacket *app)
 {
+	if(Admin() >= 50) {
+		Message(0, "Resetting AA points.");
+		ResetAA();
+	}
 	return;
 }
-*/
+

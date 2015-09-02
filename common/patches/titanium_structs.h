@@ -3157,8 +3157,7 @@ struct SendAA_Struct {
 /*0052*/	uint32 spellid;
 /*0056*/	uint32 spell_type;
 /*0060*/	uint32 spell_refresh;
-/*0064*/	uint16 classes;
-/*0066*/	uint16 berserker; //seems to be 1 if its a berserker ability
+/*0064*/	uint32 classes;
 /*0068*/	uint32 max_level;
 /*0072*/	uint32 last_id;
 /*0076*/	uint32 next_id;
@@ -3175,13 +3174,8 @@ struct AA_List {
 struct AA_Action {
 /*00*/	uint32	action;
 /*04*/	uint32	ability;
-/*08*/	uint32	unknown08;
+/*08*/	uint32	target_id;
 /*12*/	uint32	exp_value;
-};
-
-struct AA_Skills {		//this should be removed and changed to AA_Array
-/*00*/	uint32	aa_skill;
-/*04*/	uint32	aa_value;
 };
 
 struct AAExpUpdate_Struct {
@@ -3201,11 +3195,11 @@ struct AltAdvStats_Struct {
 };
 
 struct PlayerAA_Struct {
-	AA_Skills aa_list[MAX_PP_AA_ARRAY];
+	AA_Array aa_list[MAX_PP_AA_ARRAY];
 };
 
 struct AATable_Struct {
-	AA_Skills aa_list[MAX_PP_AA_ARRAY];
+	AA_Array aa_list[MAX_PP_AA_ARRAY];
 };
 
 struct Weather_Struct {

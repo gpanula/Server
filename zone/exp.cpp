@@ -515,7 +515,7 @@ void Client::SetEXP(uint32 set_exp, uint32 set_aaxp, bool isrezzexp) {
 	if (GetLevel() < 51) {
 		m_epp.perAA = 0;	// turn off aa exp if they drop below 51
 	} else
-		SendAAStats();	//otherwise, send them an AA update
+		SendAlternateAdvancementStats();	//otherwise, send them an AA update
 
 	//send the expdata in any case so the xp bar isnt stuck after leveling
 	uint32 tmpxp1 = GetEXPForLevel(GetLevel()+1);
@@ -705,7 +705,7 @@ void Group::SplitExp(uint32 exp, Mob* other) {
 		groupmod = 2.16;
 	else
 		groupmod = 1.0;
-	if(membercount > 1 &&  membercount < 6)
+	if(membercount > 1 &&  membercount <= 6)
 		groupexp += (uint32)((float)exp * groupmod * (RuleR(Character, GroupExpMultiplier)));
 
 	int conlevel = Mob::GetLevelCon(maxlevel, other->GetLevel());

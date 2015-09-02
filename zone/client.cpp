@@ -116,7 +116,7 @@ Client::Client(EQStreamInterface* ieqs)
 	),
 	//these must be listed in the order they appear in client.h
 	position_timer(250),
-	hpupdate_timer(1800),
+	hpupdate_timer(2000),
 	camp_timer(29000),
 	process_timer(100),
 	stamina_timer(40000),
@@ -176,7 +176,6 @@ Client::Client(EQStreamInterface* ieqs)
 	admin = 0;
 	lsaccountid = 0;
 	shield_target = nullptr;
-	SQL_log = nullptr;
 	guild_id = GUILD_NONE;
 	guildrank = 0;
 	GuildBanker = false;
@@ -198,6 +197,7 @@ Client::Client(EQStreamInterface* ieqs)
 	SetTarget(0);
 	auto_attack = false;
 	auto_fire = false;
+	runmode = false;
 	linkdead_timer.Disable();
 	zonesummon_id = 0;
 	zonesummon_ignorerestrictions = 0;
@@ -208,6 +208,7 @@ Client::Client(EQStreamInterface* ieqs)
 	npclevel = 0;
 	pQueuedSaveWorkID = 0;
 	position_timer_counter = 0;
+	position_update_same_count = 0;
 	fishing_timer.Disable();
 	shield_timer.Disable();
 	dead_timer.Disable();
@@ -439,7 +440,7 @@ void Client::SendZoneInPackets()
 
 	//Send AA Exp packet:
 	if (GetLevel() >= 51)
-		SendAAStats();
+		SendAlternateAdvancementStats();
 
 	// Send exp packets
 	outapp = new EQApplicationPacket(OP_ExpUpdate, sizeof(ExpUpdate_Struct));
@@ -456,7 +457,7 @@ void Client::SendZoneInPackets()
 	}
 	safe_delete(outapp);
 
-	SendAATimers();
+	SendAlternateAdvancementTimers();
 
 	outapp = new EQApplicationPacket(OP_RaidUpdate, sizeof(ZoneInSendName_Struct));
 	ZoneInSendName_Struct* zonesendname = (ZoneInSendName_Struct*)outapp->pBuffer;
@@ -523,43 +524,39 @@ void Client::ReportConnectingState() {
 	};
 }
 
-bool Client::SaveAA(){
-	int first_entry = 0;
-	std::string rquery;
-	/* Save Player AA */
+bool Client::SaveAA() {
+	std::string iquery;
 	int spentpoints = 0;
-	for (int a = 0; a < MAX_PP_AA_ARRAY; a++) {
-		uint32 points = aa[a]->value;
-		if (points > HIGHEST_AA_VALUE) {
-			aa[a]->value = HIGHEST_AA_VALUE;
-			points = HIGHEST_AA_VALUE;
-		}
-		if (points > 0) {
-			SendAA_Struct* curAA = zone->FindAA(aa[a]->AA - aa[a]->value + 1);
-			if (curAA) {
-				for (int rank = 0; rank<points; rank++) {
-					std::map<uint32, AALevelCost_Struct>::iterator RequiredLevel = AARequiredLevelAndCost.find(aa[a]->AA - aa[a]->value + 1 + rank);
-					if (RequiredLevel != AARequiredLevelAndCost.end()) {
-						spentpoints += RequiredLevel->second.Cost;
-					}
-					else
-						spentpoints += (curAA->cost + (curAA->cost_inc * rank));
-				}
+	int i = 0;
+	for(auto &rank : aa_ranks) {
+		AA::Ability *ability = zone->GetAlternateAdvancementAbility(rank.first);
+		if(!ability)
+			continue;
+
+		if(rank.second.first > 0) {
+			AA::Rank *r = ability->GetRankByPointsSpent(rank.second.first);
+
+			if(!r)
+				continue;
+
+			spentpoints += r->total_cost;
+
+			if(i == 0) {
+				iquery = StringFormat("REPLACE INTO `character_alternate_abilities` (id, aa_id, aa_value, charges)"
+									  " VALUES (%u, %u, %u, %u)", character_id, ability->first_rank_id, rank.second.first, rank.second.second);
+			} else {
+				iquery += StringFormat(", (%u, %u, %u, %u)", character_id, ability->first_rank_id, rank.second.first, rank.second.second);
 			}
+			i++;
 		}
 	}
+
 	m_pp.aapoints_spent = spentpoints + m_epp.expended_aa;
-	for (int a = 0; a < MAX_PP_AA_ARRAY; a++) {
-		if (aa[a]->AA > 0 && aa[a]->value){
-			if (first_entry != 1){
-				rquery = StringFormat("REPLACE INTO `character_alternate_abilities` (id, slot, aa_id, aa_value)"
-					" VALUES (%u, %u, %u, %u)", character_id, a, aa[a]->AA, aa[a]->value);
-				first_entry = 1;
-			}
-			rquery = rquery + StringFormat(", (%u, %u, %u, %u)", character_id, a, aa[a]->AA, aa[a]->value);
-		}
+
+	if(iquery.length() > 0) {
+		database.QueryDatabase(iquery);
 	}
-	auto results = database.QueryDatabase(rquery);
+
 	return true;
 }
 
@@ -4960,7 +4957,7 @@ void Client::ShowSkillsWindow()
 		"Singing","Sneak","Specialize Abjuration","Specialize Alteration","Specialize Conjuration","Specialize Divination","Specialize Evocation","Pick Pockets",
 		"Stringed Instruments","Swimming","Throwing","Tiger Claw","Tracking","Wind Instruments","Fishing","Make Poison","Tinkering","Research",
 		"Alchemy","Baking","Tailoring","Sense Traps","Blacksmithing","Fletching","Brewing","Alcohol Tolerance","Begging","Jewelry Making",
-		"Pottery","Percussion Instruments","Intimidation","Berserking","Taunt","Frenzy"};
+		"Pottery","Percussion Instruments","Intimidation","Berserking","Taunt","Frenzy","Remove Traps","Triple Attack"};
 	for(int i = 0; i <= (int)HIGHEST_SKILL; i++)
 		Skills[SkillName[i]] = (SkillUseTypes)i;
 
@@ -4981,7 +4978,6 @@ void Client::ShowSkillsWindow()
 	}
 	this->SendPopupToClient(WindowTitle, WindowText.c_str());
 }
-
 
 void Client::SetShadowStepExemption(bool v)
 {
@@ -8034,56 +8030,6 @@ void Client::TryItemTimer(int slot)
 	}
 }
 
-void Client::RefundAA() {
-	int cur = 0;
-	bool refunded = false;
-
-	for(int x = 0; x < aaHighestID; x++) {
-		cur = GetAA(x);
-		if(cur > 0){
-			SendAA_Struct* curaa = zone->FindAA(x);
-			if(cur){
-				SetAA(x, 0);
-				for(int j = 0; j < cur; j++) {
-					m_pp.aapoints += curaa->cost + (curaa->cost_inc * j);
-					refunded = true;
-				}
-			}
-			else
-			{
-				m_pp.aapoints += cur;
-				SetAA(x, 0);
-				refunded = true;
-			}
-		}
-	}
-
-	if(refunded) {
-		SaveAA();
-		Save();
-		// Kick();
-	}
-}
-
-void Client::IncrementAA(int aa_id) {
-	SendAA_Struct* aa2 = zone->FindAA(aa_id);
-
-	if(aa2 == nullptr)
-		return;
-
-	if(GetAA(aa_id) == aa2->max_level)
-		return;
-
-	SetAA(aa_id, GetAA(aa_id) + 1);
-
-	SaveAA();
-
-	SendAA(aa_id);
-	SendAATable();
-	SendAAStats();
-	CalcBonuses();
-}
-
 void Client::SendItemScale(ItemInst *inst) {
 	int slot = m_inv.GetSlotByItemInst(inst);
 	if(slot != -1) {
@@ -8631,4 +8577,97 @@ void Client::QuestReward(Mob* target, uint32 copper, uint32 silver, uint32 gold,
 
 	QueuePacket(outapp, false, Client::CLIENT_CONNECTED);
 	safe_delete(outapp);
+}
+
+void Client::SendHPUpdateMarquee(){
+	if (!RuleB(Character, MarqueeHPUpdates))
+		return;
+
+	/* Health Update Marquee Display: Custom*/
+	uint32 health_percentage = (uint32)(this->cur_hp * 100 / this->max_hp);
+	if (health_percentage == 100)
+		return;
+
+	std::string health_update_notification = StringFormat("Health: %u%%", health_percentage);
+	this->SendMarqueeMessage(15, 510, 0, 3000, 3000, health_update_notification);
+}
+
+uint32 Client::GetMoney(uint8 type, uint8 subtype) {
+	uint32 value = 0;
+	switch (type) {
+		case 0: {
+			switch (subtype) {
+				case 0:
+					value = static_cast<uint32>(m_pp.copper);
+					break;
+				case 1:
+					value = static_cast<uint32>(m_pp.copper_bank);
+					break;
+				case 2:
+					value = static_cast<uint32>(m_pp.copper_cursor);
+					break;
+				default:
+					break;
+			}
+			break;
+		}
+		case 1: {
+			switch (subtype) {
+				case 0:
+					value = static_cast<uint32>(m_pp.silver);
+					break;
+				case 1:
+					value = static_cast<uint32>(m_pp.silver_bank);
+					break;
+				case 2:
+					value = static_cast<uint32>(m_pp.silver_cursor);
+					break;
+				default:
+					break;
+			}
+			break;
+		}
+		case 2: {
+			switch (subtype) {
+				case 0:
+					value = static_cast<uint32>(m_pp.gold);
+					break;
+				case 1:
+					value = static_cast<uint32>(m_pp.gold_bank);
+					break;
+				case 2:
+					value = static_cast<uint32>(m_pp.gold_cursor);
+					break;
+				default:
+					break;
+			}
+			break;
+		}
+		case 3: {
+			switch (subtype) {
+				case 0:
+					value = static_cast<uint32>(m_pp.platinum);
+					break;
+				case 1:
+					value = static_cast<uint32>(m_pp.platinum_bank);
+					break;
+				case 2:
+					value = static_cast<uint32>(m_pp.platinum_cursor);
+					break;
+				case 3:
+					value = static_cast<uint32>(m_pp.platinum_shared);
+					break;
+				default:
+					break;
+			}
+			break;
+		}
+		default:
+			break;
+	}
+	return value;
+}
+
+int Client::GetAccountAge() {
+	return (time(nullptr) - GetAccountCreation());
 }

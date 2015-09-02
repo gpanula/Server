@@ -713,7 +713,7 @@ struct AA_Array
 {
 	uint32 AA;
 	uint32 value;
-	uint32 unknown08;	// Looks like AA_Array is now 12 bytes in Underfoot
+	uint32 charges;	// expendable
 };
 
 
@@ -1333,7 +1333,8 @@ struct CombatDamage_Struct
 /* 11 */	float	force;		// cd cc cc 3d
 /* 15 */	float	meleepush_xy;		// see above notes in Action_Struct
 /* 19 */	float	meleepush_z;
-/* 23 */	uint8	unknown23[5];	// was [9]
+/* 23 */	uint8	unknown23;	// was [9]
+/* 24 */	uint32	special; // 2 = Rampage, 1 = Wild Rampage
 /* 28 */
 };
 
@@ -3886,16 +3887,21 @@ struct SendAA_Struct {
 /*0049*/	uint32 spellid;
 /*0053*/	uint32 spell_type;
 /*0057*/	uint32 spell_refresh;
-/*0061*/	uint16 classes;
-/*0063*/	uint16 berserker; //seems to be 1 if its a berserker ability
+/*0061*/	uint32 classes;
 /*0065*/	uint32 max_level;
 /*0069*/	uint32 last_id;
 /*0073*/	uint32 next_id;
 /*0077*/	uint32 cost2;
-/*0081*/	uint8 unknown80[7];
+/*0081*/	uint8 unknown81;
+/*0082*/	uint8 grant_only; // VetAAs, progression, etc
+/*0083*/	uint8 unknown83; // 1 for skill cap increase AAs, Mystical Attuning, and RNG attack inc, doesn't seem to matter though
+/*0084*/	uint32 expendable_charges; // max charges of the AA
 /*0088*/	uint32 aa_expansion;
 /*0092*/	uint32 special_category;
-/*0096*/	uint32 unknown0096;
+/*0096*/	uint8 shroud;
+/*0097*/	uint8 unknown97;
+/*0098*/	uint8 layonhands; // 1 for lay on hands -- doesn't seem to matter?
+/*0099*/	uint8 unknown99;
 /*0100*/	uint32 total_abilities;
 /*0104*/	AA_Ability abilities[0];
 };
@@ -3907,15 +3913,10 @@ struct AA_List {
 struct AA_Action {
 /*00*/	uint32	action;
 /*04*/	uint32	ability;
-/*08*/	uint32	unknown08;
+/*08*/	uint32	target_id;
 /*12*/	uint32	exp_value;
 };
 
-struct AA_Skills {		//this should be removed and changed to AA_Array
-/*00*/	uint32	aa_skill;						// Total AAs Spent
-/*04*/  uint32	aa_value;
-/*08*/  uint32	unknown08;
-};
 
 struct AAExpUpdate_Struct {
 /*00*/	uint32 unknown00;	//seems to be a value from AA_Action.ability
@@ -3934,7 +3935,7 @@ struct AltAdvStats_Struct {
 };
 
 struct PlayerAA_Struct {						// Is this still used?
-	AA_Skills aa_list[MAX_PP_AA_ARRAY];
+	AA_Array aa_list[MAX_PP_AA_ARRAY];
 };
 
 struct AATable_Struct {
@@ -3944,7 +3945,7 @@ struct AATable_Struct {
 /*12*/ int32	unknown012;
 /*16*/ int32	unknown016;
 /*20*/ int32	unknown020;
-/*24*/ AA_Skills aa_list[MAX_PP_AA_ARRAY];
+/*24*/ AA_Array aa_list[MAX_PP_AA_ARRAY];
 };
 
 struct Weather_Struct {

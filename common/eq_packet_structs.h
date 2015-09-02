@@ -726,6 +726,7 @@ struct AA_Array
 {
 	uint32 AA;
 	uint32 value;
+	uint32 charges;
 };
 
 
@@ -1321,7 +1322,7 @@ struct CombatDamage_Struct
 /* 11 */	float force;
 /* 15 */	float meleepush_xy;	// see above notes in Action_Struct
 /* 19 */	float meleepush_z;
-/* 23 */
+/* 23 */	uint32 special; // 2 = Rampage, 1 = Wild Rampage
 };
 
 /*
@@ -4218,6 +4219,52 @@ struct UseAA_Struct {
 	uint32 end;
 };
 
+//new AA stuff
+//reference only
+struct AARankInfo_Struct
+{
+	uint32 id;
+	int32 upper_hotkey_sid;
+	int32 lower_hotkey_sid;
+	int32 title_sid;
+	int32 desc_sid;
+	int32 level_req;
+	int32 cost;
+	uint32 seq;
+	uint32 current_level;
+	uint32 type;
+	int32 spell;
+	int32 spell_type;
+	int32 spell_refresh;
+	int32 classes;
+	int32 max_level;
+	int32 prev_id;
+	int32 next_id;
+	int32 total_cost;
+	int32 expansion;
+	int32 category;
+	uint32 charges;
+	uint8 grant_only;
+	uint32 total_effects;
+	uint32 total_prereqs;
+};
+
+struct AARankPrereq_Struct
+{
+	int32 aa_id;
+	int32 points;
+};
+
+struct AARankEffect_Struct
+{
+	int32 effect_id;
+	int32 base1;
+	int32 base2;
+	int32 slot;
+};
+
+//old AA stuff
+
 struct AA_Ability {
 /*00*/	uint32 skill_id;
 /*04*/	uint32 base1;
@@ -4272,16 +4319,8 @@ struct SendAA_Struct {
 struct AA_Action {
 /*00*/	uint32	action;
 /*04*/	uint32	ability;
-/*08*/	uint32	unknown08;
+/*08*/	uint32	target_id;
 /*12*/	uint32	exp_value;
-};
-
-
-struct AA_Skills {		//this should be removed and changed to AA_Array
-/*00*/	uint32	aa_skill;						// Total AAs Spent
-/*04*/	uint32	aa_value;
-/*08*/	uint32	unknown08;
-/*12*/
 };
 
 struct AAExpUpdate_Struct {
@@ -4301,12 +4340,12 @@ struct AltAdvStats_Struct {
 };
 
 struct PlayerAA_Struct {						// Is this still used?
-	AA_Skills aa_list[MAX_PP_AA_ARRAY];
+	AA_Array aa_list[MAX_PP_AA_ARRAY];
 };
 
 struct AATable_Struct {
 /*00*/ int32		aa_spent;					// Total AAs Spent
-/*04*/ AA_Skills	aa_list[MAX_PP_AA_ARRAY];
+/*04*/ AA_Array	aa_list[MAX_PP_AA_ARRAY];
 };
 
 struct Weather_Struct {
@@ -4740,6 +4779,7 @@ struct BuffIcon_Struct
 	uint32 entity_id;
 	uint8  all_buffs;
 	uint16 count;
+	uint8 type; // 0 = self buff window, 1 = self target window, 4 = group, 5 = PC, 7 = NPC
 	BuffIconEntry_Struct entries[0];
 };
 

@@ -211,6 +211,7 @@ Mob::Mob(const char* in_name,
 	trackable	= true;
 	has_shieldequiped = false;
 	has_twohandbluntequiped = false;
+	has_twohanderequipped = false;
 	has_numhits = false;
 	has_MGB = false;
 	has_ProjectIllusion = false;
@@ -307,8 +308,8 @@ Mob::Mob(const char* in_name,
 	casting_spell_id = 0;
 	casting_spell_timer = 0;
 	casting_spell_timer_duration = 0;
-	casting_spell_type = 0;
 	casting_spell_inventory_slot = 0;
+	casting_spell_aa_id = 0;
 	target = 0;
 
 	ActiveProjectileATK = false;
@@ -615,7 +616,7 @@ int Mob::_GetWalkSpeed() const {
 }
 
 int Mob::_GetRunSpeed() const {
-	if (IsRooted() || IsStunned() || IsMezzed())
+	if (IsRooted() || IsStunned() || IsMezzed() || IsPseudoRooted())
 		return 0;
 
 	int aa_mod = 0;
@@ -725,7 +726,7 @@ int Mob::_GetFearSpeed() const {
 		movemod = -85;
 
 	if (IsClient()) {
-		if (CastToClient()->IsRunning())
+		if (CastToClient()->GetRunMode())
 			speed_mod = GetBaseRunspeed();
 		else
 			speed_mod = GetBaseWalkspeed();
@@ -1085,7 +1086,7 @@ void Mob::FillSpawnStruct(NewSpawn_Struct* ns, Mob* ForWho)
 	ns->spawn.max_hp	= 100;		//this field needs a better name
 	ns->spawn.race		= race;
 	ns->spawn.runspeed	= runspeed;
-	ns->spawn.walkspeed	= runspeed * 0.5f;
+	ns->spawn.walkspeed	= walkspeed;
 	ns->spawn.class_	= class_;
 	ns->spawn.gender	= gender;
 	ns->spawn.level		= level;
@@ -1141,6 +1142,10 @@ void Mob::FillSpawnStruct(NewSpawn_Struct* ns, Mob* ForWho)
 		ns->spawn.flymode = FindType(SE_Levitate) ? 2 : 0;
 	else
 		ns->spawn.flymode = flymode;
+
+	if(IsBoat()) {
+		ns->spawn.flymode = 1;
+	}
 
 	ns->spawn.lastName[0] = '\0';
 
@@ -1266,7 +1271,7 @@ void Mob::CreateHPPacket(EQApplicationPacket* app)
 }
 
 // sends hp update of this mob to people who might care
-void Mob::SendHPUpdate()
+void Mob::SendHPUpdate(bool skip_self)
 {
 	EQApplicationPacket hp_app;
 	Group *group;
@@ -1354,9 +1359,12 @@ void Mob::SendHPUpdate()
 		}
 	}
 
+	bool dospam = RuleB(Character, SpamHPUpdates);
 	// send to self - we need the actual hps here
-	if(IsClient())
-	{
+	if(IsClient() && (!skip_self || dospam)) {
+
+		this->CastToClient()->SendHPUpdateMarquee();
+
 		EQApplicationPacket* hp_app2 = new EQApplicationPacket(OP_HPUpdate,sizeof(SpawnHPUpdate_Struct));
 		SpawnHPUpdate_Struct* ds = (SpawnHPUpdate_Struct*)hp_app2->pBuffer;
 		ds->cur_hp = CastToClient()->GetHP() - itembonuses.HP;
@@ -1365,6 +1373,8 @@ void Mob::SendHPUpdate()
 		CastToClient()->QueuePacket(hp_app2);
 		safe_delete(hp_app2);
 	}
+	if (!dospam)
+		ResetHPUpdateTimer(); // delay the timer
 }
 
 // this one just warps the mob to the current location
@@ -1385,19 +1395,23 @@ void Mob::SendPosUpdate(uint8 iSendToSelf) {
 	MakeSpawnUpdate(spu);
 
 	if (iSendToSelf == 2) {
-		if (this->IsClient())
-			this->CastToClient()->FastQueuePacket(&app,false);
+		if (IsClient()) {
+			CastToClient()->FastQueuePacket(&app,false);
+		}
 	}
 	else
 	{
 		if(move_tic_count == RuleI(Zone, NPCPositonUpdateTicCount))
 		{
-			entity_list.QueueClients(this, app, (iSendToSelf==0), false);
+			entity_list.QueueClients(this, app, (iSendToSelf == 0), false);
 			move_tic_count = 0;
 		}
-		else
+		else if(move_tic_count % 2 == 0)
 		{
-			entity_list.QueueCloseClients(this, app, (iSendToSelf==0), 800, nullptr, false);
+			entity_list.QueueCloseClients(this, app, (iSendToSelf == 0), 700, nullptr, false);
+			move_tic_count++;
+		} 
+		else {
 			move_tic_count++;
 		}
 	}
@@ -1475,7 +1489,7 @@ void Mob::ShowStats(Client* client)
 			if(n->respawn2 != 0)
 				spawngroupid = n->respawn2->SpawnGroupID();
 			client->Message(0, "  NPCID: %u  SpawnGroupID: %u Grid: %i LootTable: %u FactionID: %i SpellsID: %u ", GetNPCTypeID(),spawngroupid, n->GetGrid(), n->GetLoottableID(), n->GetNPCFactionID(), n->GetNPCSpellsID());
-			client->Message(0, "  Accuracy: %i MerchantID: %i EmoteID: %i Runspeed: %u Walkspeed: %u", n->GetAccuracyRating(), n->MerchantType, n->GetEmoteID(), n->GetRunspeed(), n->GetWalkspeed());
+			client->Message(0, "  Accuracy: %i MerchantID: %i EmoteID: %i Runspeed: %.3f Walkspeed: %.3f", n->GetAccuracyRating(), n->MerchantType, n->GetEmoteID(), static_cast<float>(0.025f * n->GetRunspeed()), static_cast<float>(0.025f * n->GetWalkspeed()));
 			n->QueryLoot(client);
 		}
 		if (IsAIControlled()) {
@@ -2397,6 +2411,14 @@ bool Mob::CanThisClassDoubleAttack(void) const
 		}
 		return(CastToClient()->HasSkill(SkillDoubleAttack));
 	}
+}
+
+bool Mob::CanThisClassTripleAttack() const
+{
+	if (!IsClient())
+		return false; // When they added the real triple attack skill, mobs lost the ability to triple
+	else
+		return CastToClient()->HasSkill(SkillTripleAttack);
 }
 
 bool Mob::IsWarriorClass(void) const
@@ -3505,9 +3527,11 @@ void Mob::TriggerOnCast(uint32 focus_spell, uint32 spell_id, bool aa_trigger)
 
 	uint32 trigger_spell_id = 0;
 
-	if (aa_trigger && IsClient()){
-		//focus_spell = aaid
-		trigger_spell_id = CastToClient()->CalcAAFocus(focusTriggerOnCast, focus_spell, spell_id);
+	if (aa_trigger && IsClient()) {
+		// focus_spell = aaid
+		auto rank = zone->GetAlternateAdvancementRank(focus_spell);
+		if (rank)
+			trigger_spell_id = CastToClient()->CalcAAFocus(focusTriggerOnCast, *rank, spell_id);
 
 		if(IsValidSpell(trigger_spell_id) && GetTarget())
 			SpellFinished(trigger_spell_id, GetTarget(), 10, 0, -1, spells[trigger_spell_id].ResistDiff);
@@ -3763,10 +3787,7 @@ int16 Mob::GetSkillDmgTaken(const SkillUseTypes skill_used)
 	skilldmg_mod += itembonuses.SkillDmgTaken[HIGHEST_SKILL+1] + spellbonuses.SkillDmgTaken[HIGHEST_SKILL+1] +
 					itembonuses.SkillDmgTaken[skill_used] + spellbonuses.SkillDmgTaken[skill_used];
 
-
 	skilldmg_mod += SkillDmgTaken_Mod[skill_used] + SkillDmgTaken_Mod[HIGHEST_SKILL+1];
-
-	skilldmg_mod += spellbonuses.MeleeVulnerability + itembonuses.MeleeVulnerability + aabonuses.MeleeVulnerability;
 
 	if(skilldmg_mod < -100)
 		skilldmg_mod = -100;
@@ -4200,6 +4221,39 @@ int32 Mob::GetItemStat(uint32 itemid, const char *identifier)
 
 	safe_delete(inst);
 	return stat;
+}
+
+std::string Mob::GetGlobal(const char *varname) {
+	int qgCharid = 0;
+	int qgNpcid = 0;
+
+	if (this->IsNPC())
+		qgNpcid = this->GetNPCTypeID();
+
+	if (this->IsClient())
+		qgCharid = this->CastToClient()->CharacterID();
+
+	QGlobalCache *qglobals = nullptr;
+	std::list<QGlobal> globalMap;
+
+	if (this->IsClient())
+		qglobals = this->CastToClient()->GetQGlobals();
+
+	if (this->IsNPC())
+		qglobals = this->CastToNPC()->GetQGlobals();
+
+	if(qglobals)
+		QGlobalCache::Combine(globalMap, qglobals->GetBucket(), qgNpcid, qgCharid, zone->GetZoneID());
+
+	std::list<QGlobal>::iterator iter = globalMap.begin();
+	while(iter != globalMap.end()) {
+		if ((*iter).name.compare(varname) == 0)
+			return (*iter).value;
+
+		++iter;
+	}
+
+	return "Undefined";
 }
 
 void Mob::SetGlobal(const char *varname, const char *newvalue, int options, const char *duration, Mob *other) {
